@@ -1,4 +1,68 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+
+// ── Supabase config ───────────────────────────────────────────────
+const SUPABASE_URL = "https://cldxnrlbefwmhrpdlnrp.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsZHhucmxiZWZ3bWhycGRsbnJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzNTExNDksImV4cCI6MjA5NjkyNzE0OX0.l_s6lcSqKQ6kaRN0iRLmj4orlu_QAoIjLH4zZZHHeGc";
+
+async function dbGet(key) {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/workspace?key=eq.${key}&select=value`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY },
+    });
+    const data = await r.json();
+    if (data && data[0]) return JSON.parse(data[0].value);
+  } catch (_) {}
+  return null;
+}
+
+async function dbSet(key, value) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/workspace?key=eq.${key}`, {
+      method: "PATCH",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: "Bearer " + SUPABASE_KEY,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({ value: JSON.stringify(value), updated_at: new Date().toISOString() }),
+    });
+  } catch (_) {}
+}
+
+// ── Хук синхронизации ─────────────────────────────────────────────
+function useSynced(key, init) {
+  const [data, setData] = useState(init);
+  const [synced, setSynced] = useState(false);
+  const saveTimer = useRef(null);
+
+  // Загрузка при старте
+  useEffect(() => {
+    dbGet(key).then((v) => {
+      if (v && Array.isArray(v) && v.length > 0) setData(v);
+      setSynced(true);
+    });
+  }, [key]);
+
+  // Сохранение с задержкой 1 сек после изменений
+  useEffect(() => {
+    if (!synced) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => dbSet(key, data), 1000);
+  }, [data, synced, key]);
+
+  // Polling каждые 15 сек для синхронизации со вторым пользователем
+  useEffect(() => {
+    const interval = setInterval(() => {
+      dbGet(key).then((v) => {
+        if (v && Array.isArray(v)) setData(v);
+      });
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [key]);
+
+  return [data, setData];
+}
 
 // ── Палитра БЧДТ ──────────────────────────────────────────────────
 const C = {
@@ -18,7 +82,7 @@ const C = {
   green: "#3d7a4a",
 };
 
-// ── Данные из планировщика ─────────────────────────────────────────
+// ── Начальные данные ──────────────────────────────────────────────
 const INIT_TASKS = [
   { id: 1, title: "Доделать сайт", desc: "Структура продажи + первый выпуск", responsible: "Тори", priority: "high", start: "2025-06-05", deadline: "2025-06-07", status: "done", author: "Катя" },
   { id: 2, title: "Письмо автора", desc: "Написать письмо от имени автора, ссылка на скачивание", responsible: "Юля", priority: "high", start: "2025-06-12", deadline: "2025-06-12", status: "progress", author: "Катя" },
@@ -29,7 +93,6 @@ const INIT_TASKS = [
   { id: 7, title: "Заказать листовки", desc: "gmprint.ru/spb/calc/leaflets", responsible: "Тори", priority: "medium", start: "2025-06-12", deadline: "2025-06-15", status: "done", author: "Катя" },
   { id: 8, title: "Прописать план прогрева", desc: "2 недели следующего месяца", responsible: "Тори", priority: "high", start: "2025-06-12", deadline: "", status: "waiting", author: "Катя" },
 ];
-
 const INIT_CONTENT = [
   { id: 1, date: "2025-06-15", platform: "ВКонтакте", rubric: "Автор номера", title: "Мужчина в клинике (Алексей Агалаков)", status: "planned" },
   { id: 2, date: "2025-06-16", platform: "Telegram", rubric: "Послание недели", title: "Старт программы АЛОЭ", status: "planned" },
@@ -38,7 +101,6 @@ const INIT_CONTENT = [
   { id: 5, date: "2025-06-20", platform: "ВКонтакте", rubric: "Партнёрские истории", title: "OFFLINE VALO + REVYOU", status: "planned" },
   { id: 6, date: "2025-06-22", platform: "Instagram", rubric: "Автор номера", title: "Ягодкин: Когда скорость перестаёт быть врагом", status: "planned" },
 ];
-
 const INIT_AUTHORS = [
   { id: 1, name: "Херт ван Льюэн", lead: "Мастер-класс: войти осознанно в практику", status: "active" },
   { id: 2, name: "Николай Ягодкин", lead: "35 способов сохранять ресурс", status: "active" },
@@ -51,7 +113,6 @@ const INIT_AUTHORS = [
   { id: 9, name: "Фотограф Ваня", lead: "Скидка 50% на фотосъёмку", status: "partner" },
   { id: 10, name: "Анна Терентьева", lead: "Точка отсчёта новой версии себя", status: "active" },
 ];
-
 const INIT_STRATEGY = [
   { id: 1, category: "Цель", text: "Продукт к 4 с доходностью 200 000 ₽" },
   { id: 2, category: "Цель", text: "Автоматизация процессов" },
@@ -61,13 +122,11 @@ const INIT_STRATEGY = [
   { id: 6, category: "Встреча", text: "Лемун: Соня Севкабель + 2 приглашения" },
   { id: 7, category: "Встреча", text: "Бизнес ЛР 12:00–16:00, отель Москва. Ирина Веселова +7 921 957-48-20" },
 ];
-
 const INIT_LINKS = [
   { id: 1, url: "https://gmprint.ru/spb/calc/leaflets", title: "Листовки и визитки", desc: "Типография GMprint", category: "Подрядчики" },
   { id: 2, url: "https://taplink.cc/gorenko_olga/p/112ba72/", title: "Продажи по переписке", desc: "Четверг 19:00 — обучение", category: "Обучение" },
 ];
 
-// ── Константы ─────────────────────────────────────────────────────
 const PLATFORMS = ["ВКонтакте", "Telegram", "Instagram", "MAX", "Паблик"];
 const RUBRICS = ["Автор номера", "Практика недели", "За кадром журнала", "Послание недели", "Внутри клана", "Женщина своей стаи", "Партнёрские истории"];
 const CATS_STRATEGY = ["Цель", "Идея", "Встреча", "Задача", "Заметка"];
@@ -82,13 +141,12 @@ function uid() { return ++_nextId; }
 const TODAY = new Date();
 TODAY.setHours(0, 0, 0, 0);
 
-// ── Утилиты ──────────────────────────────────────────────────────
 function getDeadlineBadge(deadline, status) {
   if (!deadline || status === "done") return null;
   const d = new Date(deadline);
   d.setHours(0, 0, 0, 0);
   const diff = Math.ceil((d - TODAY) / 86400000);
-  if (diff < 0)  return { label: "Просрочено",       color: C.red,    bg: C.red + "22",    days: diff };
+  if (diff < 0)  return { label: "Просрочено", color: C.red, bg: C.red + "22", days: diff };
   if (diff <= 2) return { label: "Горит · " + diff + "д", color: C.orange, bg: C.orange + "22", days: diff };
   if (diff <= 5) return { label: "Скоро · " + diff + "д", color: C.yellow, bg: C.yellow + "22", days: diff };
   return { label: diff + " дн.", color: C.green, bg: C.green + "22", days: diff };
@@ -99,14 +157,13 @@ const PRIORITY_MAP = {
   medium: { label: "Средний", color: C.orange },
   low:    { label: "Низкий",  color: C.green },
 };
-
 const STATUS_MAP = {
   done:     { label: "Готово",   color: C.green },
   progress: { label: "В работе", color: C.gold },
   waiting:  { label: "Ожидает",  color: C.textMuted },
 };
 
-// ── UI-примитивы ─────────────────────────────────────────────────
+// ── UI-примитивы ──────────────────────────────────────────────────
 function Ornament() {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", color: C.goldLight, fontSize: 12, userSelect: "none", margin: "4px 0" }}>
@@ -117,32 +174,25 @@ function Ornament() {
 
 function Badge({ label, color, bg }) {
   return (
-    <span style={{
-      background: bg || color + "22",
-      color,
-      borderRadius: 4,
-      padding: "2px 8px",
-      fontSize: 11,
-      fontWeight: 700,
-      whiteSpace: "nowrap",
-      border: "1px solid " + color + "44",
-    }}>
+    <span style={{ background: bg || color + "22", color, borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", border: "1px solid " + color + "44" }}>
       {label}
     </span>
   );
 }
 
+function SyncDot({ synced }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: synced ? C.green : C.textMuted }}>
+      <div style={{ width: 7, height: 7, borderRadius: "50%", background: synced ? C.green : C.orange, flexShrink: 0 }} />
+      {synced ? "Синхронизировано" : "Подключение..."}
+    </div>
+  );
+}
+
 const inputStyle = {
-  width: "100%",
-  background: C.surface,
-  border: "1px solid " + C.border,
-  borderRadius: 6,
-  padding: "8px 10px",
-  color: C.text,
-  fontSize: 13,
-  outline: "none",
-  boxSizing: "border-box",
-  fontFamily: "Georgia, serif",
+  width: "100%", background: C.surface, border: "1px solid " + C.border,
+  borderRadius: 6, padding: "8px 10px", color: C.text, fontSize: 13,
+  outline: "none", boxSizing: "border-box", fontFamily: "Georgia, serif",
 };
 
 function Btn({ onClick, children, variant = "primary", style: s = {} }) {
@@ -161,9 +211,7 @@ function Btn({ onClick, children, variant = "primary", style: s = {} }) {
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <label style={{ display: "block", fontSize: 10, color: C.textMuted, marginBottom: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-        {label}
-      </label>
+      <label style={{ display: "block", fontSize: 10, color: C.textMuted, marginBottom: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</label>
       {children}
     </div>
   );
@@ -171,10 +219,8 @@ function Field({ label, children }) {
 
 function Modal({ title, onClose, children }) {
   return (
-    <div
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: "fixed", inset: 0, background: "#2c1f0e88", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-    >
+    <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "#2c1f0e88", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 24, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px #2c1f0e30" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <h3 style={{ margin: 0, color: C.text, fontSize: 15, fontFamily: "Georgia, serif" }}>{title}</h3>
@@ -187,18 +233,12 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-// ── Баннер горящих дедлайнов ─────────────────────────────────────
 function DeadlineAlerts({ tasks }) {
-  const hot = tasks.filter((t) => {
-    const b = getDeadlineBadge(t.deadline, t.status);
-    return b && b.days <= 2;
-  });
+  const hot = tasks.filter((t) => { const b = getDeadlineBadge(t.deadline, t.status); return b && b.days <= 2; });
   if (!hot.length) return null;
   return (
     <div style={{ background: "linear-gradient(135deg," + C.red + "18," + C.orange + "18)", border: "1px solid " + C.red + "55", borderRadius: 10, padding: "12px 16px", marginBottom: 20 }}>
-      <div style={{ color: C.red, fontWeight: 700, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
-        ⚠ Требуют внимания сегодня
-      </div>
+      <div style={{ color: C.red, fontWeight: 700, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>⚠ Требуют внимания сегодня</div>
       {hot.map((t) => {
         const b = getDeadlineBadge(t.deadline, t.status);
         return (
@@ -215,18 +255,14 @@ function DeadlineAlerts({ tasks }) {
   );
 }
 
-// ── Форма задачи ─────────────────────────────────────────────────
+// ── Задачи ────────────────────────────────────────────────────────
 function TaskForm({ initial, onSave, onClose }) {
   const [f, setF] = useState(initial || { title: "", desc: "", responsible: "Тори", priority: "medium", start: "", deadline: "", status: "waiting", author: "" });
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
   return (
     <div>
-      <Field label="Название *">
-        <input style={inputStyle} value={f.title} onChange={set("title")} placeholder="Что нужно сделать?" />
-      </Field>
-      <Field label="Описание">
-        <textarea style={{ ...inputStyle, minHeight: 64, resize: "vertical" }} value={f.desc} onChange={set("desc")} />
-      </Field>
+      <Field label="Название *"><input style={inputStyle} value={f.title} onChange={set("title")} placeholder="Что нужно сделать?" /></Field>
+      <Field label="Описание"><textarea style={{ ...inputStyle, minHeight: 64, resize: "vertical" }} value={f.desc} onChange={set("desc")} /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Ответственный">
           <select style={inputStyle} value={f.responsible} onChange={set("responsible")}>
@@ -240,12 +276,8 @@ function TaskForm({ initial, onSave, onClose }) {
             <option value="low">🟢 Низкий</option>
           </select>
         </Field>
-        <Field label="Дата начала">
-          <input type="date" style={inputStyle} value={f.start} onChange={set("start")} />
-        </Field>
-        <Field label="Дедлайн">
-          <input type="date" style={inputStyle} value={f.deadline} onChange={set("deadline")} />
-        </Field>
+        <Field label="Дата начала"><input type="date" style={inputStyle} value={f.start} onChange={set("start")} /></Field>
+        <Field label="Дедлайн"><input type="date" style={inputStyle} value={f.deadline} onChange={set("deadline")} /></Field>
         <Field label="Статус">
           <select style={inputStyle} value={f.status} onChange={set("status")}>
             <option value="waiting">Ожидает</option>
@@ -253,9 +285,7 @@ function TaskForm({ initial, onSave, onClose }) {
             <option value="done">Готово</option>
           </select>
         </Field>
-        <Field label="Поставил задачу">
-          <input style={inputStyle} value={f.author} onChange={set("author")} placeholder="Имя" />
-        </Field>
+        <Field label="Поставил задачу"><input style={inputStyle} value={f.author} onChange={set("author")} placeholder="Имя" /></Field>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
         <Btn variant="ghost" onClick={onClose}>Отмена</Btn>
@@ -265,7 +295,6 @@ function TaskForm({ initial, onSave, onClose }) {
   );
 }
 
-// ── Карточка задачи ──────────────────────────────────────────────
 function TaskCard({ task, onEdit, onDelete }) {
   const dl = getDeadlineBadge(task.deadline, task.status);
   const pr = PRIORITY_MAP[task.priority];
@@ -275,9 +304,7 @@ function TaskCard({ task, onEdit, onDelete }) {
     <div style={{ background: C.card, border: "1px solid " + (isHot ? C.red + "88" : C.borderLight), borderRadius: 10, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start", boxShadow: isHot ? "0 2px 12px " + C.red + "18" : "none" }}>
       <div style={{ flex: 1, minWidth: 180 }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
-          <span style={{ color: task.status === "done" ? C.textMuted : C.text, fontWeight: 700, fontSize: 14, textDecoration: task.status === "done" ? "line-through" : "none" }}>
-            {task.title}
-          </span>
+          <span style={{ color: task.status === "done" ? C.textMuted : C.text, fontWeight: 700, fontSize: 14, textDecoration: task.status === "done" ? "line-through" : "none" }}>{task.title}</span>
           <Badge label={pr.label} color={pr.color} />
           <Badge label={st.label} color={st.color} />
           {dl && <Badge label={dl.label} color={dl.color} bg={dl.bg} />}
@@ -297,30 +324,20 @@ function TaskCard({ task, onEdit, onDelete }) {
   );
 }
 
-// ── Вкладка: Задачи ──────────────────────────────────────────────
 function TasksTab() {
-  const [tasks, setTasks] = useState(INIT_TASKS);
+  const [tasks, setTasks] = useSynced("tasks", INIT_TASKS);
   const [modal, setModal] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterPerson, setFilterPerson] = useState("all");
 
-  useEffect(() => {
-    window.storage?.get("bchdt_tasks", true).then((r) => { if (r?.value) setTasks(JSON.parse(r.value)); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    window.storage?.set("bchdt_tasks", JSON.stringify(tasks), true).catch(() => {});
-  }, [tasks]);
-
-  const filtered = useMemo(() => {
-    return tasks
-      .filter((t) => filterStatus === "all" || t.status === filterStatus)
-      .filter((t) => filterPerson === "all" || t.responsible === filterPerson)
-      .sort((a, b) => {
-        const da = a.deadline ? new Date(a.deadline) : new Date("2099-01-01");
-        const db = b.deadline ? new Date(b.deadline) : new Date("2099-01-01");
-        return da - db;
-      });
-  }, [tasks, filterStatus, filterPerson]);
+  const filtered = useMemo(() => tasks
+    .filter((t) => filterStatus === "all" || t.status === filterStatus)
+    .filter((t) => filterPerson === "all" || t.responsible === filterPerson)
+    .sort((a, b) => {
+      const da = a.deadline ? new Date(a.deadline) : new Date("2099-01-01");
+      const db = b.deadline ? new Date(b.deadline) : new Date("2099-01-01");
+      return da - db;
+    }), [tasks, filterStatus, filterPerson]);
 
   const stats = useMemo(() => ({
     total: tasks.length,
@@ -329,31 +346,22 @@ function TasksTab() {
   }), [tasks]);
 
   function handleSave(f) {
-    if (modal === "add") {
-      setTasks((p) => [...p, { ...f, id: uid() }]);
-    } else {
-      setTasks((p) => p.map((t) => (t.id === modal.id ? { ...f, id: t.id } : t)));
-    }
+    if (modal === "add") setTasks((p) => [...p, { ...f, id: uid() }]);
+    else setTasks((p) => p.map((t) => (t.id === modal.id ? { ...f, id: t.id } : t)));
     setModal(null);
   }
 
   return (
     <div>
       <DeadlineAlerts tasks={tasks} />
-
       <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        {[
-          { label: "Всего", val: stats.total, color: C.text },
-          { label: "Готово", val: stats.done, color: C.green },
-          { label: "🔥 Горит", val: stats.hot, color: C.red },
-        ].map((s) => (
+        {[{ label: "Всего", val: stats.total, color: C.text }, { label: "Готово", val: stats.done, color: C.green }, { label: "🔥 Горит", val: stats.hot, color: C.red }].map((s) => (
           <div key={s.label} style={{ background: C.card, border: "1px solid " + C.borderLight, borderRadius: 10, padding: "10px 18px", minWidth: 88 }}>
             <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.val}</div>
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
-
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <select style={{ ...inputStyle, width: "auto" }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
           <option value="all">Все статусы</option>
@@ -368,18 +376,10 @@ function TasksTab() {
         <div style={{ flex: 1 }} />
         <Btn onClick={() => setModal("add")}>+ Добавить задачу</Btn>
       </div>
-
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {filtered.length === 0 && (
-          <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>
-            Задач нет — добавьте первую
-          </div>
-        )}
-        {filtered.map((t) => (
-          <TaskCard key={t.id} task={t} onEdit={setModal} onDelete={(id) => setTasks((p) => p.filter((t) => t.id !== id))} />
-        ))}
+        {filtered.length === 0 && <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>Задач нет — добавьте первую</div>}
+        {filtered.map((t) => <TaskCard key={t.id} task={t} onEdit={setModal} onDelete={(id) => setTasks((p) => p.filter((t) => t.id !== id))} />)}
       </div>
-
       {modal && (
         <Modal title={modal === "add" ? "Новая задача" : "Редактировать задачу"} onClose={() => setModal(null)}>
           <TaskForm initial={modal !== "add" ? modal : undefined} onSave={handleSave} onClose={() => setModal(null)} />
@@ -389,19 +389,12 @@ function TasksTab() {
   );
 }
 
-// ── Вкладка: Контент-план ────────────────────────────────────────
+// ── Контент ───────────────────────────────────────────────────────
 function ContentTab() {
-  const [items, setItems] = useState(INIT_CONTENT);
+  const [items, setItems] = useSynced("content", INIT_CONTENT);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ date: "", platform: "Telegram", rubric: "Автор номера", title: "", status: "planned" });
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
-
-  useEffect(() => {
-    window.storage?.get("bchdt_content", true).then((r) => { if (r?.value) setItems(JSON.parse(r.value)); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    window.storage?.set("bchdt_content", JSON.stringify(items), true).catch(() => {});
-  }, [items]);
 
   const grouped = useMemo(() => {
     const m = {};
@@ -411,26 +404,17 @@ function ContentTab() {
 
   function handleSave() {
     if (!form.title.trim() || !form.date) return;
-    if (modal === "add") {
-      setItems((p) => [...p, { ...form, id: uid() }]);
-    } else {
-      setItems((p) => p.map((i) => (i.id === modal.id ? { ...form, id: i.id } : i)));
-    }
+    if (modal === "add") setItems((p) => [...p, { ...form, id: uid() }]);
+    else setItems((p) => p.map((i) => (i.id === modal.id ? { ...form, id: i.id } : i)));
     setModal(null);
   }
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <Btn onClick={() => { setForm({ date: "", platform: "Telegram", rubric: "Автор номера", title: "", status: "planned" }); setModal("add"); }}>
-          + Добавить пост
-        </Btn>
+        <Btn onClick={() => { setForm({ date: "", platform: "Telegram", rubric: "Автор номера", title: "", status: "planned" }); setModal("add"); }}>+ Добавить пост</Btn>
       </div>
-
-      {grouped.length === 0 && (
-        <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>Контент-план пуст</div>
-      )}
-
+      {grouped.length === 0 && <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>Контент-план пуст</div>}
       {grouped.map(([date, posts]) => (
         <div key={date} style={{ marginBottom: 22 }}>
           <div style={{ color: C.textMuted, fontSize: 10, marginBottom: 8, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>
@@ -455,21 +439,12 @@ function ContentTab() {
           </div>
         </div>
       ))}
-
       {modal && (
         <Modal title={modal === "add" ? "Новый пост" : "Редактировать"} onClose={() => setModal(null)}>
           <Field label="Дата *"><input type="date" style={inputStyle} value={form.date} onChange={set("date")} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="Платформа">
-              <select style={inputStyle} value={form.platform} onChange={set("platform")}>
-                {PLATFORMS.map((p) => <option key={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="Рубрика">
-              <select style={inputStyle} value={form.rubric} onChange={set("rubric")}>
-                {RUBRICS.map((r) => <option key={r}>{r}</option>)}
-              </select>
-            </Field>
+            <Field label="Платформа"><select style={inputStyle} value={form.platform} onChange={set("platform")}>{PLATFORMS.map((p) => <option key={p}>{p}</option>)}</select></Field>
+            <Field label="Рубрика"><select style={inputStyle} value={form.rubric} onChange={set("rubric")}>{RUBRICS.map((r) => <option key={r}>{r}</option>)}</select></Field>
           </div>
           <Field label="Заголовок *"><input style={inputStyle} value={form.title} onChange={set("title")} placeholder="О чём пост?" /></Field>
           <Field label="Статус">
@@ -488,27 +463,17 @@ function ContentTab() {
   );
 }
 
-// ── Вкладка: Авторы ──────────────────────────────────────────────
+// ── Авторы ────────────────────────────────────────────────────────
 function AuthorsTab() {
-  const [authors, setAuthors] = useState(INIT_AUTHORS);
+  const [authors, setAuthors] = useSynced("authors", INIT_AUTHORS);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ name: "", lead: "", status: "active" });
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
 
-  useEffect(() => {
-    window.storage?.get("bchdt_authors", true).then((r) => { if (r?.value) setAuthors(JSON.parse(r.value)); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    window.storage?.set("bchdt_authors", JSON.stringify(authors), true).catch(() => {});
-  }, [authors]);
-
   function handleSave() {
     if (!form.name.trim()) return;
-    if (modal === "add") {
-      setAuthors((p) => [...p, { ...form, id: uid() }]);
-    } else {
-      setAuthors((p) => p.map((a) => (a.id === modal.id ? { ...form, id: a.id } : a)));
-    }
+    if (modal === "add") setAuthors((p) => [...p, { ...form, id: uid() }]);
+    else setAuthors((p) => p.map((a) => (a.id === modal.id ? { ...form, id: a.id } : a)));
     setModal(null);
   }
 
@@ -527,9 +492,7 @@ function AuthorsTab() {
                 <span style={{ color: C.text, fontWeight: 700, fontSize: 14, lineHeight: 1.3, flex: 1 }}>{a.name}</span>
                 <Badge label={sl} color={sc} />
               </div>
-              {a.lead && a.lead !== "—" && (
-                <div style={{ color: C.textMid, fontSize: 12, marginBottom: 10 }}>🎁 {a.lead}</div>
-              )}
+              {a.lead && a.lead !== "—" && <div style={{ color: C.textMid, fontSize: 12, marginBottom: 10 }}>🎁 {a.lead}</div>}
               <div style={{ display: "flex", gap: 6 }}>
                 <Btn variant="ghost" onClick={() => { setForm(a); setModal(a); }} style={{ padding: "4px 10px", fontSize: 11 }}>✏️ Изменить</Btn>
                 <Btn variant="danger" onClick={() => setAuthors((p) => p.filter((x) => x.id !== a.id))} style={{ padding: "4px 10px", fontSize: 11 }}>✕</Btn>
@@ -538,7 +501,6 @@ function AuthorsTab() {
           );
         })}
       </div>
-
       {modal && (
         <Modal title={modal === "add" ? "Новый автор" : "Редактировать"} onClose={() => setModal(null)}>
           <Field label="Имя *"><input style={inputStyle} value={form.name} onChange={set("name")} placeholder="Имя автора" /></Field>
@@ -559,19 +521,12 @@ function AuthorsTab() {
   );
 }
 
-// ── Вкладка: Стратегия ───────────────────────────────────────────
+// ── Стратегия ─────────────────────────────────────────────────────
 function StrategyTab() {
-  const [items, setItems] = useState(INIT_STRATEGY);
+  const [items, setItems] = useSynced("strategy", INIT_STRATEGY);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ category: "Цель", text: "" });
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
-
-  useEffect(() => {
-    window.storage?.get("bchdt_strategy", true).then((r) => { if (r?.value) setItems(JSON.parse(r.value)); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    window.storage?.set("bchdt_strategy", JSON.stringify(items), true).catch(() => {});
-  }, [items]);
 
   const grouped = useMemo(() => {
     const m = {};
@@ -581,11 +536,8 @@ function StrategyTab() {
 
   function handleSave() {
     if (!form.text.trim()) return;
-    if (modal === "add") {
-      setItems((p) => [...p, { ...form, id: uid() }]);
-    } else {
-      setItems((p) => p.map((i) => (i.id === modal.id ? { ...form, id: i.id } : i)));
-    }
+    if (modal === "add") setItems((p) => [...p, { ...form, id: uid() }]);
+    else setItems((p) => p.map((i) => (i.id === modal.id ? { ...form, id: i.id } : i)));
     setModal(null);
   }
 
@@ -633,20 +585,13 @@ function StrategyTab() {
   );
 }
 
-// ── Вкладка: Ссылки ──────────────────────────────────────────────
+// ── Ссылки ────────────────────────────────────────────────────────
 function LinksTab() {
-  const [links, setLinks] = useState(INIT_LINKS);
+  const [links, setLinks] = useSynced("links", INIT_LINKS);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({ url: "", title: "", desc: "", category: "Разное" });
   const [filterCat, setFilterCat] = useState("all");
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
-
-  useEffect(() => {
-    window.storage?.get("bchdt_links", true).then((r) => { if (r?.value) setLinks(JSON.parse(r.value)); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    window.storage?.set("bchdt_links", JSON.stringify(links), true).catch(() => {});
-  }, [links]);
 
   const usedCats = [...new Set(links.map((l) => l.category))];
   const filtered = filterCat === "all" ? links : links.filter((l) => l.category === filterCat);
@@ -654,11 +599,8 @@ function LinksTab() {
   function handleSave() {
     if (!form.url.trim() || !form.title.trim()) return;
     const url = form.url.startsWith("http") ? form.url : "https://" + form.url;
-    if (modal === "add") {
-      setLinks((p) => [...p, { ...form, url, id: uid() }]);
-    } else {
-      setLinks((p) => p.map((l) => (l.id === modal.id ? { ...form, url, id: l.id } : l)));
-    }
+    if (modal === "add") setLinks((p) => [...p, { ...form, url, id: uid() }]);
+    else setLinks((p) => p.map((l) => (l.id === modal.id ? { ...form, url, id: l.id } : l)));
     setModal(null);
   }
 
@@ -672,11 +614,7 @@ function LinksTab() {
         <div style={{ flex: 1 }} />
         <Btn onClick={() => { setForm({ url: "", title: "", desc: "", category: "Разное" }); setModal("add"); }}>+ Добавить ссылку</Btn>
       </div>
-
-      {filtered.length === 0 && (
-        <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>Ссылок нет — добавьте первую</div>
-      )}
-
+      {filtered.length === 0 && <div style={{ color: C.textMuted, textAlign: "center", padding: 40, fontStyle: "italic" }}>Ссылок нет</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {filtered.map((l) => {
           const cc = CAT_LINK_COLORS[l.category] || C.textMuted;
@@ -686,9 +624,7 @@ function LinksTab() {
             <div key={l.id} style={{ background: C.card, border: "1px solid " + C.borderLight, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
-                  <a href={l.url} target="_blank" rel="noopener noreferrer" style={{ color: C.gold, fontWeight: 700, fontSize: 14, textDecoration: "none" }}>
-                    {l.title} ↗
-                  </a>
+                  <a href={l.url} target="_blank" rel="noopener noreferrer" style={{ color: C.gold, fontWeight: 700, fontSize: 14, textDecoration: "none" }}>{l.title} ↗</a>
                   <Badge label={l.category} color={cc} />
                 </div>
                 {l.desc && <p style={{ margin: "0 0 4px", color: C.textMid, fontSize: 12, lineHeight: 1.5 }}>{l.desc}</p>}
@@ -702,7 +638,6 @@ function LinksTab() {
           );
         })}
       </div>
-
       {modal && (
         <Modal title={modal === "add" ? "Новая ссылка" : "Редактировать"} onClose={() => setModal(null)}>
           <Field label="Ссылка (URL) *"><input style={inputStyle} value={form.url} onChange={set("url")} placeholder="https://..." /></Field>
@@ -734,40 +669,35 @@ const TABS = [
 
 export default function App() {
   const [tab, setTab] = useState("tasks");
+  const [synced, setSynced] = useState(false);
+
+  useEffect(() => {
+    dbGet("tasks").then((v) => { if (v !== null) setSynced(true); });
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "Georgia, serif" }}>
       <div style={{ background: C.card, borderBottom: "1px solid " + C.border, padding: "18px 28px" }}>
-        <div style={{ fontSize: 9, letterSpacing: "0.25em", color: C.goldLight, textTransform: "uppercase", marginBottom: 4 }}>
-          Рабочее пространство
-        </div>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "0.12em" }}>
-          Б Ч Д Т
-        </h1>
-        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, fontStyle: "italic" }}>
-          Больше, чем детокс тела · Журнал
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 9, letterSpacing: "0.25em", color: C.goldLight, textTransform: "uppercase", marginBottom: 4 }}>Рабочее пространство</div>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "0.12em" }}>Б Ч Д Т</h1>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, fontStyle: "italic" }}>Больше, чем детокс тела · Журнал</div>
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <SyncDot synced={synced} />
+          </div>
         </div>
       </div>
 
       <div style={{ background: C.surface, borderBottom: "1px solid " + C.border, padding: "0 20px", display: "flex", gap: 0, overflowX: "auto" }}>
         {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: "13px 16px",
-              fontSize: 11,
-              fontWeight: 700,
-              color: tab === t.key ? C.gold : C.textMuted,
-              borderBottom: tab === t.key ? "2px solid " + C.gold : "2px solid transparent",
-              letterSpacing: "0.08em",
-              whiteSpace: "nowrap",
-              fontFamily: "Georgia, serif",
-              textTransform: "uppercase",
-            }}
-          >
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            background: "none", border: "none", cursor: "pointer", padding: "13px 16px",
+            fontSize: 11, fontWeight: 700, color: tab === t.key ? C.gold : C.textMuted,
+            borderBottom: tab === t.key ? "2px solid " + C.gold : "2px solid transparent",
+            letterSpacing: "0.08em", whiteSpace: "nowrap", fontFamily: "Georgia, serif", textTransform: "uppercase",
+          }}>
             {t.label}
           </button>
         ))}
@@ -787,3 +717,4 @@ export default function App() {
     </div>
   );
 }
+
